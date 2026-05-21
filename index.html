@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>👁️ Eye Tracker</title>
+  <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap');
+
+    :root {
+      --green: #00ff88;
+      --cyan: #00eaff;
+      --red: #ff3366;
+      --bg: #050a0e;
+      --panel: #0a1520;
+      --border: #0f2535;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg);
+      color: var(--green);
+      font-family: 'Share Tech Mono', monospace;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Scanline overlay */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,255,136,0.015) 2px,
+        rgba(0,255,136,0.015) 4px
+      );
+      pointer-events: none;
+      z-index: 999;
+    }
+
+    header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--panel);
+    }
+
+    header h1 {
+      font-family: 'Orbitron', monospace;
+      font-size: 1.1rem;
+      font-weight: 900;
+      letter-spacing: 3px;
+      color: var(--cyan);
+      text-shadow: 0 0 20px var(--cyan);
+    }
+
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--red);
+      animation: blink 1s infinite;
+    }
+    .dot.active { background: var(--green); animation: none; }
+
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+    .main {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px 16px;
+      gap: 16px;
+    }
+
+    /* Video container */
+    .video-wrap {
+      position: relative;
+      width: 100%;
+      max-width: 480px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+      background: #000;
+    }
+
+    .video-wrap::before,
+    .video-wrap::after {
+      content: '';
+      position: absolute;
+      width: 20px; height: 20px;
+      border-color: var(--cyan);
+      border-style: solid;
+      z-index: 10;
+    }
+    .video-wrap::before { top: 8px; left: 8px; border-width: 2px 0 0 2px; }
+    .video-wrap::after  { bottom: 8px; right: 8px; border-width: 0 2px 2px 0; }
+
+    video {
+      width: 100%;
+      display: block;
+      transform: scaleX(-1);
+    }
+
+    canvas#overlay {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      transform: scaleX(-1);
+    }
+
+    /* Status bar */
+    .status-bar {
+      width: 100%;
+      max-width: 480px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 12px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.75rem;
+    }
+
+    .status-item { display: flex; flex-direction: column; gap: 2px; align-items: center; }
+    .status-label { color: #456; font-size: 0.65rem; letter-spacing: 1px; }
+    .status-value { color: var(--green); font-size: 0.85rem; }
+    .status-value.warn { color: var(--red); }
+    .status-value.ok { color: var(--green); }
+
+    /* Eye direction visual */
+    .eye-viz {
+      width: 100%;
+      max-width: 480px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 16px;
+    }
+
+    .eye-viz h3 {
+      font-family: 'Orbitron', monospace;
+      font-size: 0.65rem;
+      letter-spacing: 2px;
+      color: #456;
+      margin-bottom: 12px;
+    }
+
+    .eyes-row {
+      display: flex;
+      justify-content: center;
+      gap: 40px;
+    }
+
+    .eye-socket {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .eye-label {
+      font-size: 0.65rem;
+      letter-spacing: 1px;
+      color: #456;
+    }
+
+    .eye-ball {
+      width: 60px; height: 40px;
+      border: 1.5px solid var(--cyan);
+      border-radius: 50%;
+      position: relative;
+      background: #000;
+      overflow: hidden;
+    }
+
+    .pupil {
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 10px var(--green);
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      transition: left 0.1s, top 0.1s;
+    }
+
+    /* Direction pad */
+    .dir-pad {
+      display: grid;
+      grid-template-columns: repeat(3, 28px);
+      grid-template-rows: repeat(3, 28px);
+      gap: 3px;
+    }
+
+    .dir-cell {
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.7rem;
+      color: #234;
+      transition: all 0.15s;
+    }
+
+    .dir-cell.active {
+      background: var(--green);
+      color: var(--bg);
+      border-color: var(--green);
+      box-shadow: 0 0 8px var(--green);
+    }
+
+    .dir-cell.center.active {
+      background: var(--cyan);
+      border-color: var(--cyan);
+      box-shadow: 0 0 8px var(--cyan);
+    }
+
+    /* Log */
+    .log-box {
+      width: 100%;
+      max-width: 480px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 12px 16px;
+      height: 100px;
+      overflow-y: auto;
+      font-size: 0.72rem;
+      line-height: 1.6;
+    }
+
+    .log-box::-webkit-scrollbar { width: 4px; }
+    .log-box::-webkit-scrollbar-thumb { background: var(--border); }
+
+    .log-entry { color: #456; }
+    .log-entry.new { color: var(--green); }
+    .log-entry span { color: var(--cyan); }
+
+    /* Button */
+    .btn {
+      font-family: 'Orbitron', monospace;
+      font-size: 0.75rem;
+      letter-spacing: 2px;
+      padding: 12px 28px;
+      background: transparent;
+      color: var(--cyan);
+      border: 1.5px solid var(--cyan);
+      border-radius: 2px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn:hover {
+      background: var(--cyan);
+      color: var(--bg);
+      box-shadow: 0 0 20px var(--cyan);
+    }
+
+    .loading {
+      text-align: center;
+      padding: 20px;
+      font-size: 0.8rem;
+      color: #456;
+    }
+
+    .loading span {
+      color: var(--cyan);
+      animation: pulse 1s infinite;
+    }
+
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+    .blink-warn {
+      color: var(--red) !important;
+      animation: blink 0.5s infinite;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="dot" id="statusDot"></div>
+  <h1>EYE TRACKER v1.0</h1>
+</header>
+
+<div class="main">
+
+  <div id="loadingDiv" class="loading">
+    <span>[ MEMUAT MODEL AI... ]</span><br/>
+    <small style="color:#234;margin-top:8px;display:block;">Tunggu sebentar, model sedang didownload</small>
+  </div>
+
+  <div id="appDiv" style="display:none; width:100%; display:none; flex-direction:column; align-items:center; gap:16px;">
+
+    <div class="video-wrap" id="videoWrap">
+      <video id="video" autoplay muted playsinline></video>
+      <canvas id="overlay"></canvas>
+    </div>
+
+    <div class="status-bar">
+      <div class="status-item">
+        <span class="status-label">WAJAH</span>
+        <span class="status-value" id="faceStatus">--</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">MATA KIRI</span>
+        <span class="status-value" id="leftEyeStatus">--</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">MATA KANAN</span>
+        <span class="status-value" id="rightEyeStatus">--</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">ARAH</span>
+        <span class="status-value" id="gazeDir">--</span>
+      </div>
+    </div>
+
+    <div class="eye-viz">
+      <h3>// EYE POSITION MONITOR</h3>
+      <div class="eyes-row">
+        <div class="eye-socket">
+          <div class="eye-ball" id="leftEyeBall">
+            <div class="pupil" id="leftPupil"></div>
+          </div>
+          <span class="eye-label">KIRI</span>
+        </div>
+
+        <div class="eye-socket" style="justify-content:center; align-items:center; gap:8px;">
+          <div class="dir-pad" id="dirPad">
+            <div class="dir-cell" data-dir="kiri-atas">↖</div>
+            <div class="dir-cell" data-dir="atas">↑</div>
+            <div class="dir-cell" data-dir="kanan-atas">↗</div>
+            <div class="dir-cell" data-dir="kiri">←</div>
+            <div class="dir-cell center" data-dir="tengah">·</div>
+            <div class="dir-cell" data-dir="kanan">→</div>
+            <div class="dir-cell" data-dir="kiri-bawah">↙</div>
+            <div class="dir-cell" data-dir="bawah">↓</div>
+            <div class="dir-cell" data-dir="kanan-bawah">↘</div>
+          </div>
+          <span class="eye-label">ARAH PANDANG</span>
+        </div>
+
+        <div class="eye-socket">
+          <div class="eye-ball" id="rightEyeBall">
+            <div class="pupil" id="rightPupil"></div>
+          </div>
+          <span class="eye-label">KANAN</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="log-box" id="logBox">
+      <div class="log-entry">[ sistem siap ]</div>
+    </div>
+
+    <button class="btn" id="startBtn" onclick="startCamera()">▶ MULAI KAMERA</button>
+
+  </div>
+</div>
+
+<script>
+  const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
+
+  let isRunning = false;
+  let animFrame;
+
+  // Log
+  function log(msg, isNew = true) {
+    const box = document.getElementById('logBox');
+    const entry = document.createElement('div');
+    entry.className = 'log-entry' + (isNew ? ' new' : '');
+    entry.innerHTML = `<span>[${new Date().toLocaleTimeString('id')}]</span> ${msg}`;
+    box.appendChild(entry);
+    box.scrollTop = box.scrollHeight;
+    // Keep last 30 entries
+    while (box.children.length > 30) box.removeChild(box.firstChild);
+  }
+
+  // Load models
+  async function loadModels() {
+    try {
+      log('Memuat model deteksi wajah...', true);
+      await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+      await faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL);
+      log('Model berhasil dimuat!', true);
+
+      document.getElementById('loadingDiv').style.display = 'none';
+      document.getElementById('appDiv').style.display = 'flex';
+    } catch(e) {
+      document.getElementById('loadingDiv').innerHTML = `
+        <span style="color:#ff3366">[ ERROR MEMUAT MODEL ]</span><br/>
+        <small style="color:#456;margin-top:8px;display:block;">Pastikan koneksi internet aktif<br/>${e.message}</small>
+      `;
+    }
+  }
+
+  async function startCamera() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
+      });
+      const video = document.getElementById('video');
+      video.srcObject = stream;
+      video.onloadedmetadata = () => {
+        const canvas = document.getElementById('overlay');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        document.getElementById('startBtn').style.display = 'none';
+        document.getElementById('statusDot').classList.add('active');
+        isRunning = true;
+        log('Kamera aktif — mendeteksi mata...');
+        trackLoop();
+      };
+    } catch(e) {
+      log('Gagal akses kamera: ' + e.message);
+    }
+  }
+
+  // Eye openness
+  function eyeOpenness(pts) {
+    const top = pts.slice(1, 4);
+    const bot = pts.slice(4, 7);
+    let h = 0;
+    for (let i = 0; i < 3; i++) h += Math.abs(top[i].y - bot[i].y);
+    const w = Math.abs(pts[0].x - pts[3].x);
+    return (h / 3) / (w || 1);
+  }
+
+  // Estimate gaze from iris position within eye bounds
+  function gazeFromEye(pts) {
+    const minX = Math.min(...pts.map(p => p.x));
+    const maxX = Math.max(...pts.map(p => p.x));
+    const minY = Math.min(...pts.map(p => p.y));
+    const maxY = Math.max(...pts.map(p => p.y));
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const normX = (cx - minX) / (maxX - minX || 1); // 0=left, 1=right
+    const normY = (cy - minY) / (maxY - minY || 1); // 0=top, 1=bottom
+    return { x: normX, y: normY };
+  }
+
+  // Direction string
+  function directionLabel(x, y) {
+    const h = x < 0.35 ? 'kiri' : x > 0.65 ? 'kanan' : 'tengah';
+    const v = y < 0.35 ? 'atas' : y > 0.65 ? 'bawah' : 'tengah';
+    if (h === 'tengah' && v === 'tengah') return 'tengah';
+    if (v === 'tengah') return h;
+    if (h === 'tengah') return v;
+    return `${h}-${v}`;
+  }
+
+  // Update pupil position in eye-ball visual
+  function updatePupil(id, normX, normY) {
+    const ball = document.getElementById(id === 'left' ? 'leftEyeBall' : 'rightEyeBall');
+    const pupil = document.getElementById(id === 'left' ? 'leftPupil' : 'rightPupil');
+    const bw = ball.offsetWidth;
+    const bh = ball.offsetHeight;
+    const px = (normX * (bw * 0.6)) + (bw * 0.2);
+    const py = (normY * (bh * 0.6)) + (bh * 0.2);
+    pupil.style.left = px + 'px';
+    pupil.style.top = py + 'px';
+    pupil.style.transform = 'translate(-50%, -50%)';
+  }
+
+  // Update direction pad
+  let lastDir = '';
+  function updateDirPad(dir) {
+    if (dir === lastDir) return;
+    lastDir = dir;
+    document.querySelectorAll('.dir-cell').forEach(c => c.classList.remove('active'));
+    const cell = document.querySelector(`.dir-cell[data-dir="${dir}"]`);
+    if (cell) cell.classList.add('active');
+    document.getElementById('gazeDir').textContent = dir.toUpperCase();
+  }
+
+  let lastBlinkLog = 0;
+
+  async function trackLoop() {
+    if (!isRunning) return;
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('overlay');
+    const ctx = canvas.getContext('2d');
+
+    const result = await faceapi
+      .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 }))
+      .withFaceLandmarks(true);
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (result) {
+      const lm = result.landmarks;
+
+      // Draw landmarks (eyes only)
+      const leftEyePts = lm.getLeftEye();
+      const rightEyePts = lm.getRightEye();
+
+      // Draw eye outlines
+      ctx.strokeStyle = '#00ff88';
+      ctx.lineWidth = 1.5;
+      ctx.shadowColor = '#00ff88';
+      ctx.shadowBlur = 6;
+
+      [leftEyePts, rightEyePts].forEach(pts => {
+        ctx.beginPath();
+        pts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+        ctx.closePath();
+        ctx.stroke();
+      });
+
+      // Eye openness
+      const lo = eyeOpenness(leftEyePts);
+      const ro = eyeOpenness(rightEyePts);
+
+      const BLINK_THRESH = 0.18;
+      const leftOpen = lo > BLINK_THRESH;
+      const rightOpen = ro > BLINK_THRESH;
+
+      document.getElementById('leftEyeStatus').textContent = leftOpen ? 'BUKA' : 'TUTUP';
+      document.getElementById('leftEyeStatus').className = 'status-value ' + (leftOpen ? 'ok' : 'warn');
+      document.getElementById('rightEyeStatus').textContent = rightOpen ? 'BUKA' : 'TUTUP';
+      document.getElementById('rightEyeStatus').className = 'status-value ' + (rightOpen ? 'ok' : 'warn');
+
+      // Blink log
+      const now = Date.now();
+      if (!leftOpen && !rightOpen && now - lastBlinkLog > 800) {
+        log('👁️ Kedip terdeteksi!');
+        lastBlinkLog = now;
+      }
+
+      // Gaze direction
+      const lg = gazeFromEye(leftEyePts);
+      const rg = gazeFromEye(rightEyePts);
+      const avgX = (lg.x + rg.x) / 2;
+      const avgY = (lg.y + rg.y) / 2;
+
+      updatePupil('left', lg.x, lg.y);
+      updatePupil('right', rg.x, rg.y);
+
+      const dir = directionLabel(avgX, avgY);
+      updateDirPad(dir);
+
+      // Face box
+      const box = result.detection.box;
+      ctx.strokeStyle = '#00eaff33';
+      ctx.lineWidth = 1;
+      ctx.shadowBlur = 0;
+      ctx.strokeRect(box.x, box.y, box.width, box.height);
+
+      document.getElementById('faceStatus').textContent = 'TERDETEKSI';
+      document.getElementById('faceStatus').className = 'status-value ok';
+
+    } else {
+      document.getElementById('faceStatus').textContent = 'TIDAK ADA';
+      document.getElementById('faceStatus').className = 'status-value warn';
+      document.getElementById('leftEyeStatus').textContent = '--';
+      document.getElementById('rightEyeStatus').textContent = '--';
+      updateDirPad('');
+    }
+
+    animFrame = requestAnimationFrame(trackLoop);
+  }
+
+  // Init
+  window.addEventListener('load', loadModels);
+</script>
+</body>
+</html>
